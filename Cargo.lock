@@ -2378,6 +2378,7 @@ dependencies = [
  "library",
  "mockito",
  "pulldown-cmark",
+ "rendering",
  "reqwest",
  "serde_json",
  "sha2",
