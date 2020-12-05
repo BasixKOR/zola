@@ -237,7 +237,7 @@ pub fn parse_markdown<'a>(
                     Event::Html("</code></pre>".into())
                 }
                 Event::Start(Tag::Image(link_type, src, title)) => {
-                    if is_colocated_asset_link(&src) {
+                    if !context.current_page_permalink.is_empty() && is_colocated_asset_link(&src) {
                         let link = format!("{}{}", context.current_page_permalink, &*src);
                         return Event::Start(Tag::Image(link_type, link.into(), title));
                     }
