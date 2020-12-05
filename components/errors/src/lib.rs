@@ -104,6 +104,20 @@ impl From<image::ImageError> for Error {
         Self { kind: ErrorKind::Image(e), source: None }
     }
 }
+
+impl From<Error> for tera::Error {
+    fn from(Error { kind, .. }: Error) -> Self {
+        match kind {
+            ErrorKind::Msg(ms) => tera::Error::msg(ms),
+            ErrorKind::Tera(err) => err,
+            ErrorKind::Image(err) => tera::Error::chain(format!("{}", err), err),
+            ErrorKind::Io(err) => tera::Error::chain(format!("{}", err), err),
+            ErrorKind::Syntect(err) => tera::Error::chain(format!("{}", err), err),
+            ErrorKind::Toml(err) => tera::Error::chain(format!("{}", err), err),
+        }
+    }
+}
+
 /// Convenient wrapper around std::Result.
 pub type Result<T> = ::std::result::Result<T, Error>;
 
