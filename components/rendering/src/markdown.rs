@@ -167,220 +167,231 @@ fn get_heading_refs(events: &[Event]) -> Vec<HeadingRef> {
     heading_refs
 }
 
-pub fn markdown_to_html(content: &str, context: &RenderContext) -> Result<Rendered> {
-    // the rendered html
-    let mut html = String::with_capacity(content.len());
-    // Set while parsing
-    let mut error = None;
+pub struct ParsedMarkdown<'a> {
+    events: Vec<Event<'a>>,
+    internal_links_with_anchors: Vec<(String, String)>,
+    external_links: Vec<String>,
+    has_summary: bool,
+}
 
+pub fn parse_markdown<'a>(
+    content: &'a str,
+    opts: Options,
+    context: &'a RenderContext,
+) -> Result<ParsedMarkdown<'a>> {
     let mut highlighter: Option<CodeBlock> = None;
+    let mut error = None;
+    let mut in_html_block = false;
 
-    let mut inserted_anchors: Vec<String> = vec![];
-    let mut headings: Vec<Heading> = vec![];
+    let mut has_summary = false;
     let mut internal_links_with_anchors = Vec::new();
     let mut external_links = Vec::new();
 
+    let events = Parser::new_ext(content, opts)
+        .map(|event| {
+            match event {
+                Event::Text(text) => {
+                    // if we are in the middle of a highlighted code block
+                    if let Some(ref mut code_block) = highlighter {
+                        let html = code_block.highlight(&text);
+                        Event::Html(html.into())
+                    } else {
+                        // Business as usual
+                        Event::Text(text)
+                    }
+                }
+                Event::Start(Tag::CodeBlock(ref kind)) => {
+                    if !context.config.highlight_code {
+                        return Event::Html("<pre><code>".into());
+                    }
+
+                    let theme = &THEME_SET.themes[&context.config.highlight_theme];
+                    match kind {
+                        CodeBlockKind::Indented => (),
+                        CodeBlockKind::Fenced(fence_info) => {
+                            // This selects the background color the same way that
+                            // start_coloured_html_snippet does
+                            let color = theme
+                                .settings
+                                .background
+                                .unwrap_or(::syntect::highlighting::Color::WHITE);
+
+                            highlighter = Some(CodeBlock::new(
+                                fence_info,
+                                &context.config,
+                                IncludeBackground::IfDifferent(color),
+                            ));
+                        }
+                    };
+                    let snippet = start_highlighted_html_snippet(theme);
+                    let mut html = snippet.0;
+                    html.push_str("<code>");
+                    Event::Html(html.into())
+                }
+                Event::End(Tag::CodeBlock(_)) => {
+                    if !context.config.highlight_code {
+                        return Event::Html("</code></pre>\n".into());
+                    }
+                    // reset highlight and close the code block
+                    highlighter = None;
+                    Event::Html("</code></pre>".into())
+                }
+                Event::Start(Tag::Image(link_type, src, title)) => {
+                    if is_colocated_asset_link(&src) {
+                        let link = format!("{}{}", context.current_page_permalink, &*src);
+                        return Event::Start(Tag::Image(link_type, link.into(), title));
+                    }
+
+                    Event::Start(Tag::Image(link_type, src, title))
+                }
+                Event::Start(Tag::Link(link_type, link, title)) if link.is_empty() => {
+                    error = Some(Error::msg("There is a link that is missing a URL"));
+                    Event::Start(Tag::Link(link_type, "#".into(), title))
+                }
+                Event::Start(Tag::Link(link_type, link, title)) => {
+                    let fixed_link = match fix_link(
+                        link_type,
+                        &link,
+                        context,
+                        &mut internal_links_with_anchors,
+                        &mut external_links,
+                    ) {
+                        Ok(fixed_link) => fixed_link,
+                        Err(err) => {
+                            error = Some(err);
+                            return Event::Html("".into());
+                        }
+                    };
+
+                    Event::Start(Tag::Link(link_type, fixed_link.into(), title))
+                }
+                Event::Html(ref markup) => {
+                    if markup.contains("<!-- more -->") {
+                        has_summary = true;
+                        Event::Html(CONTINUE_READING.into())
+                    } else {
+                        if in_html_block && markup.contains("</pre>") {
+                            in_html_block = false;
+                            Event::Html(markup.replacen("</pre>", "", 1).into())
+                        } else if markup.contains("pre data-shortcode") {
+                            in_html_block = true;
+                            let m = markup.replacen("<pre data-shortcode>", "", 1);
+                            if m.contains("</pre>") {
+                                in_html_block = false;
+                                Event::Html(m.replacen("</pre>", "", 1).into())
+                            } else {
+                                Event::Html(m.into())
+                            }
+                        } else {
+                            event
+                        }
+                    }
+                }
+                _ => event,
+            }
+        })
+        .collect::<Vec<_>>(); // We need to collect the events to make a second pass
+
+    if let Some(err) = error {
+        Err(err)
+    } else {
+        Ok(ParsedMarkdown { events, external_links, internal_links_with_anchors, has_summary })
+    }
+}
+
+pub fn markdown_to_html(content: &str, context: &RenderContext) -> Result<Rendered> {
+    // the rendered html
+    let mut html = String::with_capacity(content.len());
+
+    let mut inserted_anchors: Vec<String> = vec![];
+    let mut headings: Vec<Heading> = vec![];
+
     let mut opts = Options::empty();
-    let mut has_summary = false;
-    let mut in_html_block = false;
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_FOOTNOTES);
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TASKLISTS);
 
-    {
-        let mut events = Parser::new_ext(content, opts)
-            .map(|event| {
-                match event {
-                    Event::Text(text) => {
-                        // if we are in the middle of a highlighted code block
-                        if let Some(ref mut code_block) = highlighter {
-                            let html = code_block.highlight(&text);
-                            Event::Html(html.into())
-                        } else {
-                            // Business as usual
-                            Event::Text(text)
-                        }
-                    }
-                    Event::Start(Tag::CodeBlock(ref kind)) => {
-                        if !context.config.highlight_code {
-                            return Event::Html("<pre><code>".into());
-                        }
+    let ParsedMarkdown { mut events, internal_links_with_anchors, external_links, has_summary } =
+        parse_markdown(content, opts, context)?; 
 
-                        let theme = &THEME_SET.themes[&context.config.highlight_theme];
-                        match kind {
-                            CodeBlockKind::Indented => (),
-                            CodeBlockKind::Fenced(fence_info) => {
-                                // This selects the background color the same way that
-                                // start_coloured_html_snippet does
-                                let color = theme
-                                    .settings
-                                    .background
-                                    .unwrap_or(::syntect::highlighting::Color::WHITE);
+    let mut heading_refs = get_heading_refs(&events);
 
-                                highlighter = Some(CodeBlock::new(
-                                    fence_info,
-                                    &context.config,
-                                    IncludeBackground::IfDifferent(color),
-                                ));
-                            }
-                        };
-                        let snippet = start_highlighted_html_snippet(theme);
-                        let mut html = snippet.0;
-                        html.push_str("<code>");
-                        Event::Html(html.into())
-                    }
-                    Event::End(Tag::CodeBlock(_)) => {
-                        if !context.config.highlight_code {
-                            return Event::Html("</code></pre>\n".into());
-                        }
-                        // reset highlight and close the code block
-                        highlighter = None;
-                        Event::Html("</code></pre>".into())
-                    }
-                    Event::Start(Tag::Image(link_type, src, title)) => {
-                        if is_colocated_asset_link(&src) {
-                            let link = format!("{}{}", context.current_page_permalink, &*src);
-                            return Event::Start(Tag::Image(link_type, link.into(), title));
-                        }
+    let mut anchors_to_insert = vec![];
 
-                        Event::Start(Tag::Image(link_type, src, title))
+    // First heading pass: look for a manually-specified IDs, e.g. `# Heading text {#hash}`
+    // (This is a separate first pass so that auto IDs can avoid collisions with manual IDs.)
+    for heading_ref in heading_refs.iter_mut() {
+        let end_idx = heading_ref.end_idx;
+        if let Event::Text(ref mut text) = events[end_idx - 1] {
+            if text.as_bytes().last() == Some(&b'}') {
+                if let Some(mut i) = text.find("{#") {
+                    let id = text[i + 2..text.len() - 1].to_owned();
+                    inserted_anchors.push(id.clone());
+                    while i > 0 && text.as_bytes()[i - 1] == b' ' {
+                        i -= 1;
                     }
-                    Event::Start(Tag::Link(link_type, link, title)) if link.is_empty() => {
-                        error = Some(Error::msg("There is a link that is missing a URL"));
-                        Event::Start(Tag::Link(link_type, "#".into(), title))
-                    }
-                    Event::Start(Tag::Link(link_type, link, title)) => {
-                        let fixed_link = match fix_link(
-                            link_type,
-                            &link,
-                            context,
-                            &mut internal_links_with_anchors,
-                            &mut external_links,
-                        ) {
-                            Ok(fixed_link) => fixed_link,
-                            Err(err) => {
-                                error = Some(err);
-                                return Event::Html("".into());
-                            }
-                        };
-
-                        Event::Start(Tag::Link(link_type, fixed_link.into(), title))
-                    }
-                    Event::Html(ref markup) => {
-                        if markup.contains("<!-- more -->") {
-                            has_summary = true;
-                            Event::Html(CONTINUE_READING.into())
-                        } else {
-                            if in_html_block && markup.contains("</pre>") {
-                                in_html_block = false;
-                                Event::Html(markup.replacen("</pre>", "", 1).into())
-                            } else if markup.contains("pre data-shortcode") {
-                                in_html_block = true;
-                                let m = markup.replacen("<pre data-shortcode>", "", 1);
-                                if m.contains("</pre>") {
-                                    in_html_block = false;
-                                    Event::Html(m.replacen("</pre>", "", 1).into())
-                                } else {
-                                    Event::Html(m.into())
-                                }
-                            } else {
-                                event
-                            }
-                        }
-                    }
-                    _ => event,
-                }
-            })
-            .collect::<Vec<_>>(); // We need to collect the events to make a second pass
-
-        let mut heading_refs = get_heading_refs(&events);
-
-        let mut anchors_to_insert = vec![];
-
-        // First heading pass: look for a manually-specified IDs, e.g. `# Heading text {#hash}`
-        // (This is a separate first pass so that auto IDs can avoid collisions with manual IDs.)
-        for heading_ref in heading_refs.iter_mut() {
-            let end_idx = heading_ref.end_idx;
-            if let Event::Text(ref mut text) = events[end_idx - 1] {
-                if text.as_bytes().last() == Some(&b'}') {
-                    if let Some(mut i) = text.find("{#") {
-                        let id = text[i + 2..text.len() - 1].to_owned();
-                        inserted_anchors.push(id.clone());
-                        while i > 0 && text.as_bytes()[i - 1] == b' ' {
-                            i -= 1;
-                        }
-                        heading_ref.id = Some(id);
-                        *text = text[..i].to_owned().into();
-                    }
+                    heading_ref.id = Some(id);
+                    *text = text[..i].to_owned().into();
                 }
             }
         }
+    }
 
-        // Second heading pass: auto-generate remaining IDs, and emit HTML
-        for heading_ref in heading_refs {
-            let start_idx = heading_ref.start_idx;
-            let end_idx = heading_ref.end_idx;
-            let title = get_text(&events[start_idx + 1..end_idx]);
-            let id = heading_ref.id.unwrap_or_else(|| {
-                find_anchor(
-                    &inserted_anchors,
-                    slugify_anchors(&title, context.config.slugify.anchors),
-                    0,
-                )
-            });
-            inserted_anchors.push(id.clone());
+    // Second heading pass: auto-generate remaining IDs, and emit HTML
+    for heading_ref in heading_refs {
+        let start_idx = heading_ref.start_idx;
+        let end_idx = heading_ref.end_idx;
+        let title = get_text(&events[start_idx + 1..end_idx]);
+        let id = heading_ref.id.unwrap_or_else(|| {
+            find_anchor(
+                &inserted_anchors,
+                slugify_anchors(&title, context.config.slugify.anchors),
+                0,
+            )
+        });
+        inserted_anchors.push(id.clone());
 
-            // insert `id` to the tag
-            let html = format!("<h{lvl} id=\"{id}\">", lvl = heading_ref.level, id = id);
-            events[start_idx] = Event::Html(html.into());
+        // insert `id` to the tag
+        let html = format!("<h{lvl} id=\"{id}\">", lvl = heading_ref.level, id = id);
+        events[start_idx] = Event::Html(html.into());
 
-            // generate anchors and places to insert them
-            if context.insert_anchor != InsertAnchor::None {
-                let anchor_idx = match context.insert_anchor {
-                    InsertAnchor::Left => start_idx + 1,
-                    InsertAnchor::Right => end_idx,
-                    InsertAnchor::None => 0, // Not important
-                };
-                let mut c = tera::Context::new();
-                c.insert("id", &id);
-                c.insert("level", &heading_ref.level);
-
-                let anchor_link = utils::templates::render_template(
-                    &ANCHOR_LINK_TEMPLATE,
-                    context.tera,
-                    c,
-                    &None,
-                )
-                .map_err(|e| Error::chain("Failed to render anchor link template", e))?;
-                anchors_to_insert.push((anchor_idx, Event::Html(anchor_link.into())));
-            }
-
-            // record heading to make table of contents
-            let permalink = format!("{}#{}", context.current_page_permalink, id);
-            let h =
-                Heading { level: heading_ref.level, id, permalink, title, children: Vec::new() };
-            headings.push(h);
-        }
-
+        // generate anchors and places to insert them
         if context.insert_anchor != InsertAnchor::None {
-            events.insert_many(anchors_to_insert);
+            let anchor_idx = match context.insert_anchor {
+                InsertAnchor::Left => start_idx + 1,
+                InsertAnchor::Right => end_idx,
+                InsertAnchor::None => 0, // Not important
+            };
+            let mut c = tera::Context::new();
+            c.insert("id", &id);
+            c.insert("level", &heading_ref.level);
+
+            let anchor_link =
+                utils::templates::render_template(&ANCHOR_LINK_TEMPLATE, context.tera, c, &None)
+                    .map_err(|e| Error::chain("Failed to render anchor link template", e))?;
+            anchors_to_insert.push((anchor_idx, Event::Html(anchor_link.into())));
         }
 
-        cmark::html::push_html(&mut html, events.into_iter());
+        // record heading to make table of contents
+        let permalink = format!("{}#{}", context.current_page_permalink, id);
+        let h = Heading { level: heading_ref.level, id, permalink, title, children: Vec::new() };
+        headings.push(h);
     }
 
-    if let Some(e) = error {
-        Err(e)
-    } else {
-        Ok(Rendered {
-            summary_len: if has_summary { html.find(CONTINUE_READING) } else { None },
-            body: html,
-            toc: make_table_of_contents(headings),
-            internal_links_with_anchors,
-            external_links,
-        })
+    if context.insert_anchor != InsertAnchor::None {
+        events.insert_many(anchors_to_insert);
     }
+
+    cmark::html::push_html(&mut html, events.into_iter());
+
+    Ok(Rendered {
+        summary_len: if has_summary { html.find(CONTINUE_READING) } else { None },
+        body: html,
+        toc: make_table_of_contents(headings),
+        internal_links_with_anchors,
+        external_links,
+    })
 }
 
 #[cfg(test)]
