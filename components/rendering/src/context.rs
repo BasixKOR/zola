@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use config::Config;
-use front_matter::InsertAnchor;
+pub use front_matter::InsertAnchor;
 use tera::{Context, Tera};
 
 /// All the information from the zola site that is needed to render HTML from markdown

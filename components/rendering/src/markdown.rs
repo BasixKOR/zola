@@ -168,7 +168,7 @@ fn get_heading_refs(events: &[Event]) -> Vec<HeadingRef> {
 }
 
 pub struct ParsedMarkdown<'a> {
-    events: Vec<Event<'a>>,
+    pub events: Vec<Event<'a>>,
     internal_links_with_anchors: Vec<(String, String)>,
     external_links: Vec<String>,
     has_summary: bool,

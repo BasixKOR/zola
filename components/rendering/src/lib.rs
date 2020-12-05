@@ -5,8 +5,8 @@ mod table_of_contents;
 
 use errors::Result;
 
-pub use context::RenderContext;
-use markdown::markdown_to_html;
+pub use context::{RenderContext, InsertAnchor};
+pub use markdown::{parse_markdown, markdown_to_html};
 pub use shortcode::render_shortcodes;
 pub use table_of_contents::Heading;
 
