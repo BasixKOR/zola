@@ -3,6 +3,8 @@ use std::hash::BuildHasher;
 
 use base64::{decode, encode};
 use pulldown_cmark as cmark;
+use rendering::{parse_markdown, RenderContext, InsertAnchor};
+use config::Config;
 use tera::{to_value, try_get_value, Result as TeraResult, Value};
 
 pub fn markdown<S: BuildHasher>(
@@ -22,8 +24,19 @@ pub fn markdown<S: BuildHasher>(
     opts.insert(cmark::Options::ENABLE_TASKLISTS);
 
     let mut html = String::new();
-    let parser = cmark::Parser::new_ext(&s, opts);
-    cmark::html::push_html(&mut html, parser);
+
+    let config = Config::default();
+    let unused_map = HashMap::new();
+    let context = RenderContext::new(
+        &super::ZOLA_TERA,
+        &config, // TODO: replace to real config
+        "", // No colocated assets for markdown filter, will be ignored
+        &unused_map,  // unused
+        InsertAnchor::None // unused
+    );
+    let parsed = parse_markdown(&s, opts, &context)?;
+
+    cmark::html::push_html(&mut html, parsed.events.into_iter());
 
     if inline {
         html = html
