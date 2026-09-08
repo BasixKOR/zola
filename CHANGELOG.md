@@ -4,6 +4,7 @@
 
 - Fix `text_direction` not being wired up correctly and causing compilation errors when used in templates
 - Fix `get_taxonomy_url` in templated content not finding anything
+- Fix `get_taxonomy`, `get_taxonomy_term` and `get_taxonomy_url` not finding taxonomies via names if they differ when slugified
 - Update tera, adding back `locale` param to the `date` filter
 - Fix dark borders around PNG when resizing images
 
