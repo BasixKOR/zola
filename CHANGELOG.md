@@ -8,6 +8,7 @@
 - Update tera, adding back `locale` param to the `date` filter
 - Fix dark borders around PNG when resizing images
 - Cache results of `get_hash`
+- Rebuild whole site on any template change in `zola serve`, a smarter reload will come later
 
 ## 0.23.4 (2026-08-20)
 
