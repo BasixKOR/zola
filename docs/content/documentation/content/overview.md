@@ -52,9 +52,11 @@ These components can be used in your content but also in your templates, unlike 
 you want to use in your content if you need them.
 
 ```j2
+{% raw -%}
 {% component something(@config) %}
 ...
 {% endcomponent %}
+{%- raw %}
 ```
 ### Avoiding template compilation error
 
