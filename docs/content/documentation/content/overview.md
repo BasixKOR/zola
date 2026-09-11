@@ -56,6 +56,17 @@ you want to use in your content if you need them.
 ...
 {% endcomponent %}
 ```
+### Avoiding template compilation error
+
+Since all content is now potentially a template, you might have compilation errors if you have sigils like {% raw %}`{{`/`{%`{% endraw %} in your content.
+
+You have 2 ways of fixing it:
+
+1. If you don't need templating/components in your content, set the `skip_content_templating` option from the config file to match all content files
+2. Wrap the offending lines in {{ "`{% raw %}{% endraw %}`" }} so they are ignored
+
+This documentation site uses both approaches, you can always look at the [source](https://github.com/getzola/zola/tree/master/docs/content/documentation)
+since it does have a lot of Tera code in it.
 
 ## Asset colocation
 
