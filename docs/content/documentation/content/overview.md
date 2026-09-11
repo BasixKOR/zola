@@ -48,6 +48,16 @@ See the [Tera migration guide](https://github.com/Keats/tera/blob/master/MIGRATI
 Shortcodes have been removed in 0.23. The closest feature available now is [Tera components](https://keats.github.io/tera/#components).
 These components can be used in your content but also in your templates, unlike shortcodes.
 
+`page`, `config` etc are not available automatically in the components: use implicit parameters on the component
+you want to use in your content if you need them.
+
+```j2
+{% raw -%}
+{% component something(@config) %}
+...
+{% endcomponent %}
+{%- raw %}
+```
 ### Avoiding template compilation error
 
 Since all content is now potentially a template, you might have compilation errors if you have sigils like {% raw %}`{{`/`{%`{% endraw %} in your content.

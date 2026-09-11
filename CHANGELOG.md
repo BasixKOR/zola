@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.23.5 (2026-09-11)
+
+- Fix `text_direction` not being wired up correctly and causing compilation errors when used in templates
+- Fix `get_taxonomy_url` in templated content not finding anything
+- Fix `get_taxonomy`, `get_taxonomy_term` and `get_taxonomy_url` not finding taxonomies via names if they differ when slugified
+- Update tera, adding back `locale` param to the `date` filter
+- Fix dark borders around PNG when resizing images
+- Cache results of `get_hash`
+- Rebuild whole site on any template change in `zola serve`, a smarter reload will come later
+
 ## 0.23.4 (2026-08-20)
 
 - Fix another `get_url` bug adding a trailing slash for non default language

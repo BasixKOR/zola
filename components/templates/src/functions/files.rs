@@ -190,11 +190,12 @@ pub struct GetHash {
     base_path: PathBuf,
     theme: Option<String>,
     output_path: PathBuf,
+    result_cache: Mutex<HashMap<(String, u16, bool), String>>,
 }
 
 impl GetHash {
     pub fn new(base_path: PathBuf, theme: Option<String>, output_path: PathBuf) -> Self {
-        Self { base_path, theme, output_path }
+        Self { base_path, theme, output_path, result_cache: Mutex::new(HashMap::new()) }
     }
 }
 
@@ -202,8 +203,13 @@ impl Function<TeraResult<String>> for GetHash {
     fn call(&self, kwargs: Kwargs, _: &State) -> TeraResult<String> {
         let path: Option<String> = kwargs.get("path")?;
         let literal: Option<String> = kwargs.get("literal")?;
+        let sha_type: u16 = kwargs.get("sha_type")?.unwrap_or(384);
+        if ![256, 384, 512].contains(&sha_type) {
+            return Err(Error::message("`get_hash`: Invalid sha value"));
+        }
+        let base64: bool = kwargs.get("base64")?.unwrap_or(true);
 
-        let contents = match (path, literal) {
+        let (contents, cache_key) = match (path, literal) {
             (Some(_), Some(_)) => {
                 return Err(Error::message(
                     "`get_hash`: must have only one of `path` or `literal` argument",
@@ -215,42 +221,51 @@ impl Function<TeraResult<String>> for GetHash {
                 ));
             }
             (Some(path_v), None) => {
+                let key = (path_v, sha_type, base64);
+                let cache = self.result_cache.lock().expect("result cache lock");
+                if let Some(hash) = cache.get(&key) {
+                    return Ok(hash.clone());
+                }
+                drop(cache);
+
                 let file_path =
-                    match search_for_file(&self.base_path, &path_v, &self.theme, &self.output_path)
+                    match search_for_file(&self.base_path, &key.0, &self.theme, &self.output_path)
                         .map_err(|e| Error::message(format!("`get_hash`: {}", e)))?
                     {
                         Some((f, _)) => f,
                         None => {
                             return Err(Error::message(format!(
                                 "`get_hash`: Cannot find file: {}",
-                                path_v
+                                key.0
                             )));
                         }
                     };
 
                 let mut f = fs::File::open(&file_path).map_err(|e| {
-                    Error::message(format!("File {} could not be open: {}", path_v, e))
+                    Error::message(format!("File {} could not be open: {}", key.0, e))
                 })?;
 
                 let mut contents = Vec::new();
                 f.read_to_end(&mut contents).map_err(|e| {
-                    Error::message(format!("File {} could not be read: {}", path_v, e))
+                    Error::message(format!("File {} could not be read: {}", key.0, e))
                 })?;
 
-                contents
+                (contents, Some(key))
             }
-            (None, Some(literal_v)) => literal_v.into_bytes(),
+            (None, Some(literal_v)) => (literal_v.into_bytes(), None),
         };
-
-        let sha_type: u16 = kwargs.get("sha_type")?.unwrap_or(384);
-        let base64: bool = kwargs.get("base64")?.unwrap_or(true);
 
         let hash = match sha_type {
             256 => compute_hash::<Sha256>(&contents, base64),
             384 => compute_hash::<Sha384>(&contents, base64),
             512 => compute_hash::<Sha512>(&contents, base64),
-            _ => return Err(Error::message("`get_hash`: Invalid sha value")),
+            _ => unreachable!(),
         };
+
+        if let Some(key) = cache_key {
+            let mut cache = self.result_cache.lock().expect("result cache lock");
+            cache.insert(key, hash.clone());
+        }
 
         Ok(hash)
     }

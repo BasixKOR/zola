@@ -103,7 +103,7 @@ pub fn render_page(
 
     page.summary = res.summary;
     page.content = res.body;
-    page.raw_content.clear();
+    page.raw_content = String::new();
     page.toc = res.toc;
     page.internal_links = res.internal_links;
     page.external_links = res.external_links;
@@ -155,7 +155,7 @@ pub fn render_section(
         .with_context(|| format!("Failed to render content of {}", section.file.path.display()))?;
 
     section.content = res.body;
-    section.raw_content.clear();
+    section.raw_content = String::new();
     section.toc = res.toc;
     section.external_links = res.external_links;
     if let Some(ref redirect_to) = section.meta.redirect_to
