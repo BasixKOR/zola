@@ -48,6 +48,15 @@ See the [Tera migration guide](https://github.com/Keats/tera/blob/master/MIGRATI
 Shortcodes have been removed in 0.23. The closest feature available now is [Tera components](https://keats.github.io/tera/#components).
 These components can be used in your content but also in your templates, unlike shortcodes.
 
+`page`, `config` etc are not available automatically in the components: use implicit parameters on the component
+you want to use in your content if you need them.
+
+```j2
+{% component something(@config) %}
+...
+{% endcomponent %}
+```
+
 ## Asset colocation
 
 The `content` directory is not limited to markup files. It's natural to want to co-locate a page and some related
