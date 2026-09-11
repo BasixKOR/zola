@@ -7,6 +7,7 @@
 - Fix `get_taxonomy`, `get_taxonomy_term` and `get_taxonomy_url` not finding taxonomies via names if they differ when slugified
 - Update tera, adding back `locale` param to the `date` filter
 - Fix dark borders around PNG when resizing images
+- Cache results of `get_hash`
 
 ## 0.23.4 (2026-08-20)
 
