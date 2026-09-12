@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.23.6 (2026-09-12)
+
+- Update tera version to add implicit params
+
 ## 0.23.5 (2026-09-11)
 
 - Fix `text_direction` not being wired up correctly and causing compilation errors when used in templates
